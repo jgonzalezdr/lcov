@@ -47,6 +47,11 @@
 #   2008-07-14 / Tom Zoerner: added --function-coverage command line option
 #   2008-08-13 / Peter Oberparleiter: modified function coverage
 #                implementation (now enabled per default)
+#   2013-06-22 / Donald MacQueen (dmacq@instantiations.com) modified 1.10 to work
+#                on Windows without Msys. changed the version number to 1.10w
+#   2015-05-12 / Jesús González: modified windows-compatible implementation
+#                to fix wrong slashes in file paths and to be less divergent from
+#                the base implementation
 #
 
 use strict;
@@ -60,8 +65,10 @@ if( $^O eq "msys" )
 	require File::Spec::Win32;
 }
 
+use Perl::OSType ':all';
+
 # Constants
-our $lcov_version	= 'LCOV version 1.10';
+our $lcov_version	= 'LCOV version 1.10w-jg1 (Windows)';
 our $lcov_url		= "http://ltp.sourceforge.net/coverage/lcov.php";
 our $gcov_tool		= "gcov";
 our $tool_name		= basename($0);
@@ -249,10 +256,10 @@ our $gcno_split_crc;
 our $func_coverage = 1;
 our $br_coverage = 0;
 our $rc_auto_base = 1;
-
-our $cwd = `pwd`;
-chomp($cwd);
-
+our $cwd;
+our $tool_dir = dirname($0);    # Directory where geninfo tool is installed
+our $is_windows;
+my $dir_sep;		# Directory separator character
 
 #
 # Code entry point
@@ -266,6 +273,21 @@ $SIG{__DIE__} = \&die_handler;
 # Prettify version string
 $lcov_version =~ s/\$\s*Revision\s*:?\s*(\S+)\s*\$/$1/;
 
+# Are we running on Windows?
+$is_windows = is_os_type('Windows');
+
+if ($is_windows) 
+{
+	chomp($cwd = `cd`);
+	$dir_sep = "\\";
+	$gcov_tool = $gcov_tool.".exe";
+}
+else 
+{
+	chomp($cwd = `pwd`);
+	$dir_sep = "/";
+}
+
 # Set LANG so that gcov output will be in a unified format
 $ENV{"LANG"} = "C";
 
@@ -276,15 +298,21 @@ GetOptions("config-file=s" => \$opt_config_file,
 Getopt::Long::Configure("default");
 
 # Read configuration file if available
-if (defined($opt_config_file)) {
-	$config = read_config($opt_config_file);
-} elsif (defined($ENV{"HOME"}) && (-r $ENV{"HOME"}."/.lcovrc"))
+if (defined($opt_config_file)) 
 {
-	$config = read_config($ENV{"HOME"}."/.lcovrc");
+	$config = read_config($opt_config_file);
 }
-elsif (-r "/etc/lcovrc")
+elsif (defined($ENV{"HOME"}) && (-r $ENV{"HOME"}.$dir_sep.".lcovrc"))
+{
+	$config = read_config($ENV{"HOME"}.$dir_sep.".lcovrc");
+}
+elsif ((!$is_windows) and (-r "/etc/lcovrc"))
 {
 	$config = read_config("/etc/lcovrc");
+}
+elsif (($is_windows) and (-r "$tool_dir/../lcovrc"))
+{
+    $config = read_config("$tool_dir/../lcovrc");
 }
 
 if ($config || %opt_rc)
@@ -610,7 +638,7 @@ sub get_common_prefix($@)
 
 	foreach $file (@files) {
 		my ($v, $d, $f) = splitpath($file);
-		my @comp = splitdir($d);
+		my @comp = splitdir($is_windows ? $v.$d : $d);
 
 		if (!@prefix) {
 			@prefix = @comp;
@@ -681,14 +709,20 @@ sub gen_info($)
 	if (-d $directory)
 	{
 		info("Scanning $directory for $ext files ...\n");
+		if ($is_windows)
+		{
+			@file_list = `dir /s/b "$directory\\*$ext" 2>NUL`;
+		}
+		else
+		{
+			@file_list = `find "$directory" $maxdepth $follow -name \\*$ext -type f 2>/dev/null`;
+		}
 
-		@file_list = `find "$directory" $maxdepth $follow -name \\*$ext -type f 2>/dev/null`;
 		chomp(@file_list);
 		@file_list or
 			die("ERROR: no $ext files found in $directory!\n");
-		$prefix = get_common_prefix(1, @file_list);
-		info("Found %d %s files in %s\n", $#file_list+1, $type,
-		     $directory);
+		$prefix = solve_relative_path($cwd, $directory);
+		info("Found %d %s files in %s\n", $#file_list+1, $type, $directory);
 	}
 	else
 	{
@@ -985,7 +1019,7 @@ sub process_dafile($$)
 
 	# Change to directory containing data files and apply GCOV
 	debug("chdir($base_dir)\n");
-        chdir($base_dir);
+        chdir($base_dir) or die("cannot change dir\n");
 
 	if ($da_renamed)
 	{
@@ -1066,6 +1100,9 @@ sub process_dafile($$)
 		# Skip gcov file for gcc built-in code
 		next if ($gcov_file eq "<built-in>.gcov");
 
+		# Files from c:\mingw seem corrupted somehow, so ignore them.
+		next if (index ($gcov_file, "mingw") ne -1);
+
 		($source, $object) = read_gcov_header($gcov_file);
 
 		if (!defined($source)) {
@@ -1074,6 +1111,13 @@ sub process_dafile($$)
 			$source = $gcov_file;
 			$source =~ s/\.gcov$//;
 		}
+
+		if( $is_windows )
+		{
+			# Some paths are reported with "forward" slashes instead 
+			# of backslashes, so we have to fix them
+		    $source =~ s/\//\\/g;         
+		} 
 
 		$source = solve_relative_path($base_dir, $source);
 
@@ -1359,29 +1403,55 @@ sub solve_relative_path($$)
 	}
 
 	$result = $dir;
+
+	if( $is_windows )
+	{
+		# Prepend path if not absolute
+		if( !( $dir =~ /^[a-zA-Z]:\\/ ) )
+		{
+			$result = $path.$dir_sep.$result;
+		}
+
+		# Remove \\
+		$result =~ s/\\+/\\/g;
+
+		# Remove .
+		$result =~ s/\\\.\\/\\/g;
+		$result =~ s/\\\.$/\\/g;
+
+		# Remove trailing \
+		$result =~ s/\\+$//g;
+
+		# Solve ..
+		while ($result =~ s/\\[^\\]+\\\.\.\\/\\/) {}
+
+		# Remove preceding ..
+		$result =~ s/^([a-zA-Z]:)\\\.\.\\/$1\\/g;
+	}
+	else
+	{
 	# Prepend path if not absolute
-	if ($dir =~ /^[^\/]/)
-	{
-		$result = "$path/$result";
+		if ($dir =~ /^[^\/]/)
+		{
+			$result = $path.$dir_sep.$result;
+		}
+
+		# Remove //
+		$result =~ s/\/+/\//g;
+
+		# Remove .
+		$result =~ s/\/\.\//\//g;
+		$result =~ s/\/\.$/\//g;
+
+		# Remove trailing /
+		$result =~ s/\/+$//g;
+
+		# Solve ..
+		while ($result =~ s/\/[^\/]+\/\.\.\//\//) {}
+
+		# Remove preceding ..
+		$result =~ s/^\/\.\.\//\//g;
 	}
-
-	# Remove //
-	$result =~ s/\/\//\//g;
-
-	# Remove .
-	$result =~ s/\/\.\//\//g;
-	$result =~ s/\/\.$/\//g;
-
-	# Remove trailing /
-	$result =~ s/\/$//g;
-
-	# Solve ..
-	while ($result =~ s/\/[^\/]+\/\.\.\//\//)
-	{
-	}
-
-	# Remove preceding ..
-	$result =~ s/^\/\.\.\//\//g;
 
 	return $result;
 }
@@ -1497,14 +1567,13 @@ sub solve_ambiguous_match($$$)
 
 sub split_filename($)
 {
-	my @path_components = split('/', $_[0]);
+	my @path_components = split("\\".$dir_sep, $_[0]);
 	my @file_components = split('\.', pop(@path_components));
 	my $extension = pop(@file_components);
 
-	return (join("/",@path_components), join(".",@file_components),
+	return (join($dir_sep, @path_components), join(".", @file_components),
 		$extension);
 }
-
 
 #
 # read_gcov_header(gcov_filename)
@@ -3201,6 +3270,11 @@ sub read_gcno_lines_record(*$$$$$$)
 			graph_expect("filename");
 			$string = read_gcno_string($handle, $big_endian);
 			return undef if (!defined($string));
+			if( $is_windows )
+			{
+				# Replace forward slashes by backslashes (happens sometimes..)
+				$string =~ s/\//\\/g;
+			}
 			# Check for end of record
 			if ($string eq "") {
 				return $filename;
@@ -3302,6 +3376,11 @@ sub read_gcno_function_record(*$$$$)
 	graph_expect("filename");
 	$filename = read_gcno_string($handle, $big_endian);
 	return undef if (!defined($filename));
+	if( $is_windows )
+	{
+		# Replace forward slashes by backslashes (happens sometimes..)
+		$filename =~ s/\//\\/g;
+	}
 	# Read first line number
 	$lineno = read_gcno_value($handle, $big_endian, "initial line number");
 	return undef if (!defined($lineno));
