@@ -68,7 +68,7 @@ if( $^O eq "msys" )
 use Perl::OSType ':all';
 
 # Constants
-our $lcov_version	= 'LCOV version 1.11w-jg1 (Windows)';
+our $lcov_version	= 'LCOV version 1.11w (Windows)';
 our $lcov_url		= "http://ltp.sourceforge.net/coverage/lcov.php";
 our $gcov_tool		= "gcov";
 our $tool_name		= basename($0);
