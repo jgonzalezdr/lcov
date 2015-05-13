@@ -300,6 +300,7 @@ our @opt_ignore_errors;	# Ignore certain error classes during processing
 our @ignore;
 our $opt_config_file;	# User-specified configuration file location
 our %opt_rc;
+our %opt_rc_cmdline;
 our $charset = "UTF-8";	# Default charset for HTML pages
 our @fileview_sortlist;
 our @fileview_sortname = ("", "-sort-l", "-sort-f", "-sort-b");
@@ -345,8 +346,17 @@ else
 # Check command line for a configuration file name
 Getopt::Long::Configure("pass_through", "no_auto_abbrev");
 GetOptions("config-file=s" => \$opt_config_file,
-	   "rc=s%" => \%opt_rc);
+	   "rc=s%" => \%opt_rc_cmdline);
 Getopt::Long::Configure("default");
+
+# Remove spaces around rc options
+while (my ($key, $value) = each(%opt_rc_cmdline))
+{
+	$key =~ s/^\s+|\s+$//g;
+	$value =~ s/^\s+|\s+$//g;
+
+	$opt_rc{$key} = $value;
+}
 
 # Read configuration file if available
 if (defined($opt_config_file)) 
@@ -882,6 +892,7 @@ sub demangle_cpp($)
 	my $handle;
 	my %demangled;
 	my $changed;
+	my $cppfilt_params = "";
 
 	# Nothing to do
 	return if (!@$fn_list);
@@ -895,7 +906,11 @@ sub demangle_cpp($)
 	close($handle);
 
 	# Run c++ filt on tempfile file and parse output, creating a hash
-	open($handle, "-|", "c++filt < $tmpfile") or
+	if( $is_windows )
+	{
+		$cppfilt_params = "-n";
+	}
+	open($handle, "-|", "c++filt $cppfilt_params < $tmpfile") or
 		die("ERROR: could not run c++filt: $!\n");
 	@fn_list_demangled = <$handle>;
 	close($handle);
@@ -5509,19 +5524,6 @@ END_OF_HTML
 		my $countstyle;
 
 		# Escape special characters
-		# Demangle C++ function names if requested
-		if ($demangle_cpp) {
-			if( $is_windows )
-			{
-				$name = `c++filt -n "$name"`;
-			}
-			else
-			{
-				$name = `c++filt "$name"`;
-			}
-			chomp($name);
-		}
-		# Escape any remaining special characters
 		$name = escape_html($name);
 		if ($startline < 1) {
 			$startline = 1;

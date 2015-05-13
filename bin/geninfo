@@ -257,6 +257,7 @@ our $opt_config_file;
 our $opt_gcov_all_blocks = 1;
 our $opt_compat;
 our %opt_rc;
+our %opt_rc_cmdline;
 our %compat_value;
 our $gcno_split_crc;
 our $func_coverage = 1;
@@ -300,13 +301,12 @@ $ENV{"LC_ALL"} = "C";
 # Check command line for a configuration file name
 Getopt::Long::Configure("pass_through", "no_auto_abbrev");
 GetOptions("config-file=s" => \$opt_config_file,
-	   "rc=s%" => \%opt_rc);
+	   "rc=s%" => \%opt_rc_cmdline);
 Getopt::Long::Configure("default");
 
 # Remove spaces around rc options
-while (my ($key, $value) = each(%opt_rc)) {
-	delete($opt_rc{$key});
-
+while (my ($key, $value) = each(%opt_rc_cmdline))
+{
 	$key =~ s/^\s+|\s+$//g;
 	$value =~ s/^\s+|\s+$//g;
 
