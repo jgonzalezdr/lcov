@@ -1026,7 +1026,6 @@ sub gen_html()
 		
 		info("Using user-specified filename prefix \"".
 		     "$dir_prefix\"\n");
-		$dir_prefix =~ s/\/+$//;
 	}
 
 	# Read in test description file if specified
@@ -1243,18 +1242,7 @@ sub process_dir($)
 
 	# Match filenames which specify files in this directory, not including
 	# sub-directories
-	my @list;
-
-	if ($is_windows) 
-	{
-		@list = ( grep( /^\Q$abs_dir\E\\[^\\]*$/, keys(%info_data) ) );
-	}
-	else 
-	{
-		@list = ( grep( /^\Q$abs_dir\E\/[^\/]*$/, keys(%info_data) ) );
-	}
-
-	foreach $filename (@list) 
+	foreach $filename ( grep( /^\Q$abs_dir$dir_sep\E[^\Q$dir_sep\E]*$/, keys(%info_data) ) ) 
 	{
 		my $page_link;
 		my $func_link;

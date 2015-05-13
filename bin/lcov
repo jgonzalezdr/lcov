@@ -385,7 +385,7 @@ if ($opt_list_width <= 40) {
 }
 
 # Normalize --path text
-$diff_path =~ s/\/$//;
+$diff_path =~ s/\Q$dir_sep\E+$//;
 
 if ($follow)
 {
@@ -3034,12 +3034,12 @@ sub list()
 			     keys(%{$data}));
 	$root_prefix = 1 if ($prefix eq rootdir());
 	$got_prefix = 1 if (length($prefix) > 0);
-	$prefix =~ s/\/$//;
+	$prefix =~ s/\Q$dir_sep\E+$//;
 	# Get longest filename length
 	foreach $filename (keys(%{$data})) {
 		if (!$opt_list_full_path) {
 			if (!$got_prefix || !$root_prefix &&
-			    !($filename =~ s/^\Q$prefix\/\E//)) {
+			    !($filename =~ s/^\Q$prefix$dir_sep\E//)) {
 				my ($v, $d, $f) = splitpath($filename);
 
 				$filename = $f;
@@ -3138,11 +3138,11 @@ sub list()
 
 			$print_filename = $filename;
 			if (!$got_prefix || !$root_prefix &&
-			    !($print_filename =~ s/^\Q$prefix\/\E//)) {
+			    !($print_filename =~ s/^\Q$prefix$dir_sep\E//)) {
 				my ($v, $d, $f) = splitpath($filename);
 
 				$p = catpath($v, $d, "");
-				$p =~ s/\/$//;
+				$p =~ s/\Q$dir_sep\E$//;
 				$print_filename = $f;
 			} else {
 				$p = $prefix;
@@ -3151,7 +3151,7 @@ sub list()
 			if (!defined($lastpath) || $lastpath ne $p) {
 				print("\n") if (defined($lastpath));
 				$lastpath = $p;
-				print("[$lastpath/]\n") if (!$root_prefix);
+				print("[$lastpath$dir_sep]\n") if (!$root_prefix);
 			}
 			$print_filename = shorten_filename($print_filename,
 							   $strlen);
@@ -3283,7 +3283,7 @@ sub strip_directories($$)
 	}
 	for ($i = 0; $i < $depth; $i++)
 	{
-		$filename =~ s/^[^\/]*\/+(.*)$/$1/;
+		$filename =~ s/^[^\Q$dir_sep\E]*\Q$dir_sep\E+(.*)$/$1/;
 	}
 	return $filename;
 }
@@ -3625,12 +3625,12 @@ sub get_line_hash($$$)
 	my $new_depth;
 
 	# Remove trailing slash from diff path
-	$diff_path =~ s/\/$//;
+	$diff_path =~ s/\Q$dir_sep\E+$//;
 	foreach (keys(%{$diff_data}))
 	{
 		my $sep = "";
 
-		$sep = '/' if (!/^\//);
+		$sep = $dir_sep if (!/^\Q$dir_sep\E/);
 
 		# Try to match diff filename with filename
 		if ($filename =~ /^\Q$diff_path$sep$_\E$/)
@@ -3639,8 +3639,8 @@ sub get_line_hash($$$)
 			{
 				# Two files match, choose the more specific one
 				# (the one with more path components)
-				$old_depth = ($diff_name =~ tr/\///);
-				$new_depth = (tr/\///);
+				$old_depth = ($diff_name =~ tr/$dir_sep//);
+				$new_depth = (tr/$dir_sep//);
 				if ($old_depth == $new_depth)
 				{
 					die("ERROR: diff file contains ".
@@ -3699,8 +3699,8 @@ sub convert_paths($$)
 	foreach $filename (keys(%{$path_conversion_data}))
 	{
 		$new_path = $path_conversion_data->{$filename};
-		while (($filename =~ s/^(.*)\/[^\/]+$/$1/) &&
-		       ($new_path =~ s/^(.*)\/[^\/]+$/$1/) &&
+		while (($filename =~ s/^(.*)\Q$dir_sep\E[^\Q$dir_sep\E]+$/$1/) &&
+		       ($new_path =~ s/^(.*)\Q$dir_sep\E[^\Q$dir_sep\E]+$/$1/) &&
 		       ($filename ne $new_path))
 		{
 			$path_conversion_data->{$filename} = $new_path;
