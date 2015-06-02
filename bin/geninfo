@@ -325,7 +325,7 @@ elsif ((!$os_is_windows) and (-r "/etc/lcovrc"))
 }
 elsif (($os_is_windows) and (-r "$tool_dir/../lcovrc"))
 {
-    $config = read_config("$tool_dir/../lcovrc");
+	$config = read_config("$tool_dir/../lcovrc");
 }
 
 if ($config || %opt_rc)
