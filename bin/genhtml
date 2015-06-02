@@ -326,13 +326,13 @@ $os_is_windows = is_os_type('Windows');
 
 if ($os_is_windows) {
 	chomp($cwd = `cd`);
-    $dir_sep = "\\";
+	$dir_sep = "\\";
 	$date = localtime;
 }
 else 
 {
 	chomp($cwd = `pwd`);
-    $dir_sep = "/";
+	$dir_sep = "/";
 	$date = get_date_string();
 }
 
@@ -664,52 +664,52 @@ sub resolve_absolute_path($$)
 
 	if( $os_is_windows )
 	{
-        # Prepend path if not absolute
-	    if( !( $path =~ /^[a-zA-Z]:\\/ ) )
-	    {
-	        $path = $cwd.$dir_sep.$path;
-	    }
-	    
-        # Remove \\
-        $path =~ s/\\+/\\/g;
+		# Prepend path if not absolute
+		if( !( $path =~ /^[a-zA-Z]:\\/ ) )
+		{
+			$path = $cwd.$dir_sep.$path;
+		}
+
+		# Remove \\
+		$path =~ s/\\+/\\/g;
     
-        # Remove .
-        $path =~ s/\\\.\\/\\/g;
-        $path =~ s/\\\.$/\\/g;
+		# Remove .
+		$path =~ s/\\\.\\/\\/g;
+		$path =~ s/\\\.$/\\/g;
     
-        # Remove trailing \
-        $path =~ s/\\+$//g;
+		# Remove trailing \
+		$path =~ s/\\+$//g;
     
-        # Solve ..
-        while ($path =~ s/\\[^\\]+\\\.\.\\/\\/) {}
+		# Solve ..
+		while ($path =~ s/\\[^\\]+\\\.\.\\/\\/) {}
     
-        # Remove preceding ..
-        $path =~ s/^([a-zA-Z]:)\\\.\.\\/$1\\/g;
+		# Remove preceding ..
+		$path =~ s/^([a-zA-Z]:)\\\.\.\\/$1\\/g;
 	}
 	else
 	{
-	    if ($path =~ /^[^\/]/)
-	    {
-	        $path = $cwd.$dir_sep.$path;
-	    }
-	    
-	    # Remove //
-	    $path =~ s/\/+/\//g;
+		if ($path =~ /^[^\/]/)
+		{
+			$path = $cwd.$dir_sep.$path;
+		}
+  
+		# Remove //
+		$path =~ s/\/+/\//g;
 	
-	    # Remove .
-	    $path =~ s/\/\.\//\//g;
-	    $path =~ s/\/\.$/\//g;
+		# Remove .
+		$path =~ s/\/\.\//\//g;
+		$path =~ s/\/\.$/\//g;
 	
-	    # Remove trailing /
-	    $path =~ s/\/+$//g;
+		# Remove trailing /
+		$path =~ s/\/+$//g;
 	
-	    # Solve ..
-	    while ($path =~ s/\/[^\/]+\/\.\.\//\//) {}
+		# Solve ..
+		while ($path =~ s/\/[^\/]+\/\.\.\//\//) {}
 	
-	    # Remove preceding ..
-	    $path =~ s/^\/\.\.\//\//g;
+		# Remove preceding ..
+		$path =~ s/^\/\.\.\//\//g;
 	}
-	
+
 	return $path;
 }
 

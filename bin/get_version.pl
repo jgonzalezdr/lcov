@@ -15,22 +15,22 @@ our $release;
 
 sub print_usage
 {
-    print "Usage: ".basename($0)." (--version|--release)\n";
-    exit 1;
+	print "Usage: ".basename($0)." (--version|--release)\n";
+	exit 1;
 }
 
 if( length($git_version) )
 {
-    if( $git_version =~ /^(.+?)-(.*)$/ )
-    {
-        $version = $1; 
-        $release = $2;
-        $release =~ s/-/\./g;
-    }
+	if( $git_version =~ /^(.+?)-(.*)$/ )
+	{
+		$version = $1; 
+		$release = $2;
+		$release =~ s/-/\./g;
+	}
 }
 elsif( -f $version_file )
 {
-    eval read_file( $version_file );
+	eval read_file( $version_file );
 }
 
 # Fallback values 
@@ -39,18 +39,18 @@ $release ||= "1";
 
 if( ! defined $ARGV[0] )
 {
-    print_usage();
+	print_usage();
 }
 elsif( $ARGV[0] eq "--version" )
 {
-    print $version;
+	print $version;
 }
 elsif( $ARGV[0] eq "--release" )
 {
-    print $release;
+	print $release;
 }
 else
 {
-    print_usage;
+	print_usage;
 }
 
