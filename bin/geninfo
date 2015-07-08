@@ -281,6 +281,7 @@ if ($os_is_windows)
 	chomp($cwd = `cd`);
 	$dir_sep = "\\";
 	$gcov_tool = $gcov_tool.".exe";
+	$gcov_tool =~ s/\//\\/g;
 }
 else 
 {
@@ -490,6 +491,12 @@ if ($adjust_testname)
 # Make sure base_directory contains an absolute path specification
 if ($base_directory)
 {
+	if( $os_is_windows )
+	{
+		# Replace forward slashes by backslashes
+		$base_directory =~ s/\//\\/g;
+	}
+    
 	$base_directory = solve_relative_path($cwd, $base_directory);
 }
 
@@ -535,6 +542,11 @@ else
 {
 	foreach (@data_directory)
 	{
+		if( $os_is_windows )
+		{
+			# Replace forward slashes by backslashes
+			s/\//\\/g;
+		}
 		stat($_);
 		if (!-r _)
 		{
@@ -560,11 +572,17 @@ else
 {
 	$data_file_extension = ".gcda";
 	$graph_file_extension = ".gcno";
-}	
+}
 
 # Check output filename
 if (defined($output_filename) && ($output_filename ne "-"))
 {
+	if( $os_is_windows )
+	{
+		# Replace forward slashes by backslashes
+		$output_filename =~ s/\//\\/g;
+	}
+    
 	# Initially create output filename, data is appended
 	# for each data file processed
 	local *DUMMY_HANDLE;

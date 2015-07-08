@@ -215,6 +215,9 @@ $SIG{__DIE__} = \&die_handler;
 $SIG{'INT'} = \&abort_handler;
 $SIG{'QUIT'} = \&abort_handler;
 
+# Are we running on Windows?
+$os_is_windows = is_os_type('Windows');
+
 if ($os_is_windows) 
 {
 	chomp($cwd = `cd`);
@@ -389,6 +392,29 @@ if ($no_recursion)
 else
 {
 	$maxdepth = "";
+}
+
+if( $os_is_windows )
+{
+	# Replace forward slashes by backslashes
+	for( @directory )
+	{
+		s/\//\\/g;
+	}
+	for( @add_tracefile )
+	{
+		s/\//\\/g;
+	}
+	if( defined($list) ) { $list =~ s/\//\\/g; }
+	if( defined($extract) ) { $extract =~ s/\//\\/g; }
+	if( defined($remove) ) { $remove =~ s/\//\\/g; }
+	if( defined($diff_path) ) { $diff_path =~ s/\//\\/g; }
+	if( defined($output_filename) ) { $output_filename =~ s/\//\\/g; }
+	if( defined($base_directory) ) { $base_directory =~ s/\//\\/g; }
+	if( defined($gcov_tool) ) { $gcov_tool =~ s/\//\\/g; }
+	if( defined($to_package) ) { $to_package =~ s/\//\\/g; }
+	if( defined($from_package) ) { $from_package =~ s/\//\\/g; }
+	if( defined($opt_config_file) ) { $opt_config_file =~ s/\//\\/g };
 }
 
 # Check for valid options

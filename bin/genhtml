@@ -486,6 +486,20 @@ if ($version)
 	exit(0);
 }
 
+if( $os_is_windows )
+{
+	# Replace forward slashes by backslashes
+	if( defined($desc_filename) ) { $desc_filename =~ s/\//\\/g; }
+	if( defined($css_filename) ) { $css_filename =~ s/\//\\/g; }
+	if( defined($base_filename) ) { $base_filename =~ s/\//\\/g; }
+	if( defined($dir_prefix) ) { $dir_prefix =~ s/\//\\/g; }
+	if( defined($opt_config_file) ) { $opt_config_file =~ s/\//\\/g; }
+	for( @info_filenames )
+	{
+		s/\//\\/g;
+	}
+}
+
 # Determine which errors the user wants us to ignore
 parse_ignore_errors(@opt_ignore_errors);
 

@@ -6,8 +6,24 @@ use File::Basename;
 use File::Slurp;
 use Cwd qw/abs_path/;
 
+use Perl::OSType ':all';
+
+# Are we running on Windows?
+our $os_is_windows = is_os_type('Windows');
+
 our $tool_dir = abs_path(dirname($0));
-our $git_version = `git -C $tool_dir describe --tags 2>/dev/null`;
+
+our $redirect_to_null;
+if ($os_is_windows) 
+{
+	$redirect_to_null = "2>NUL";
+}
+else
+{
+	$redirect_to_null = "2>/dev/null";
+}
+
+our $git_version = `git -C $tool_dir describe --tags $redirect_to_null`;
 our $version_file = $tool_dir."/../.version.pl";
 
 our $version;
@@ -34,7 +50,7 @@ elsif( -f $version_file )
 }
 
 # Fallback values 
-$version ||= "1.0";
+$version ||= "1.11";
 $release ||= "1";
 
 if( ! defined $ARGV[0] )
@@ -53,4 +69,3 @@ else
 {
 	print_usage;
 }
-
