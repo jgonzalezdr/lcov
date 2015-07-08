@@ -53,9 +53,9 @@ elsif( -f $version_file )
 $version ||= "1.11";
 $release ||= "1";
 
-if( ! defined $ARGV[0] )
+if( !defined $ARGV[0] )
 {
-	print_usage();
+	print_usage;
 }
 elsif( $ARGV[0] eq "--version" )
 {
