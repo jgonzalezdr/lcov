@@ -2731,6 +2731,12 @@ sub write_info_file(*$)
 sub transform_pattern($)
 {
 	my $pattern = $_[0];
+    
+    if( $os_is_windows )
+    {
+        # Replace forward slashes by backslashes
+        $pattern =~ s/\//\\/g;
+    }
 
 	# Escape special chars
 
