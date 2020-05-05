@@ -72,11 +72,12 @@ use Getopt::Long;
 use Digest::MD5 qw(md5_base64);
 use Cwd qw/abs_path cwd/;
 
+use Perl::OSType ':all';
 
 # Global constants
 our $title		= "LCOV - code coverage report";
 our $tool_dir		= abs_path(dirname($0));
-our $lcov_version	= 'LCOV version '.`$tool_dir/get_version.sh --full`;
+our $lcov_version	= 'LCOV version '.`perl $tool_dir/get_version.pl --full`;
 our $lcov_url		= "http://ltp.sourceforge.net/coverage/lcov.php";
 our $tool_name		= basename($0);
 
@@ -165,6 +166,7 @@ our %ERROR_ID = (
 );
 
 # Data related prototypes
+sub resolve_absolute_path($$);
 sub print_usage(*);
 sub gen_html();
 sub html_create($$);
@@ -254,7 +256,7 @@ our %info_data;		# Hash containing all data from .info file
 our @opt_dir_prefix;	# Array of prefixes to remove from all sub directories
 our @dir_prefix;
 our %test_description;	# Hash containing test descriptions if available
-our $date = get_date_string();
+our $date;
 
 our @info_filenames;	# List of .info files to use as data source
 our $test_title;	# Title for output as written to each page header
@@ -301,9 +303,10 @@ our @rate_png = ("ruby.png", "amber.png", "emerald.png");
 our $lcov_func_coverage = 1;
 our $lcov_branch_coverage = 0;
 our $rc_desc_html = 0;	# lcovrc: genhtml_desc_html
+our $os_is_windows;
+our $dir_sep;        # Directory separator character
 
 our $cwd = cwd();	# Current working directory
-
 
 #
 # Code entry point
@@ -311,6 +314,19 @@ our $cwd = cwd();	# Current working directory
 
 $SIG{__WARN__} = \&warn_handler;
 $SIG{__DIE__} = \&die_handler;
+
+# Are we running on Windows?
+$os_is_windows = is_os_type('Windows');
+
+if ($os_is_windows) {
+	$dir_sep = "\\";
+	$date = localtime;
+}
+else 
+{
+	$dir_sep = "/";
+	$date = get_date_string();
+}
 
 # Check command line for a configuration file name
 Getopt::Long::Configure("pass_through", "no_auto_abbrev");
@@ -332,18 +348,24 @@ Getopt::Long::Configure("default");
 }
 
 # Read configuration file if available
-if (defined($opt_config_file)) {
+if (defined($opt_config_file)) 
+{
 	$config = read_config($opt_config_file);
-} elsif (defined($ENV{"HOME"}) && (-r $ENV{"HOME"}."/.lcovrc"))
+} 
+elsif (defined($ENV{"HOME"}) && (-r $ENV{"HOME"}."/.lcovrc"))
 {
 	$config = read_config($ENV{"HOME"}."/.lcovrc");
 }
-elsif (-r "/etc/lcovrc")
+elsif ((!$os_is_windows) and (-r "/etc/lcovrc")) 
 {
 	$config = read_config("/etc/lcovrc");
-} elsif (-r "/usr/local/etc/lcovrc")
+} elsif ((!$os_is_windows) and (-r "/usr/local/etc/lcovrc"))
 {
 	$config = read_config("/usr/local/etc/lcovrc");
+}
+elsif (($os_is_windows) and (-r "$tool_dir/../lcovrc"))
+{
+    $config = read_config("$tool_dir/../lcovrc");
 }
 
 if ($config || %opt_rc)
@@ -462,6 +484,23 @@ if ($version)
 	exit(0);
 }
 
+if( $os_is_windows )
+{
+	# Replace forward slashes by backslashes
+	if( defined($desc_filename) ) { $desc_filename =~ s/\//\\/g; }
+	if( defined($css_filename) ) { $css_filename =~ s/\//\\/g; }
+	if( defined($base_filename) ) { $base_filename =~ s/\//\\/g; }
+	for( @opt_dir_prefix )
+	{
+		s/\//\\/g;
+	}
+	if( defined($opt_config_file) ) { $opt_config_file =~ s/\//\\/g; }
+	for( @info_filenames )
+	{
+		s/\//\\/g;
+	}
+}
+
 # Determine which errors the user wants us to ignore
 parse_ignore_errors(@opt_ignore_errors);
 
@@ -494,10 +533,7 @@ if (!$test_title)
 # directories)
 if ($css_filename)
 {
-	if (!($css_filename =~ /^\/(.*)$/))
-	{
-		$css_filename = $cwd."/".$css_filename;
-	}
+	$css_filename = resolve_absolute_path($css_filename, $cwd);
 }
 
 # Make sure tab_size is within valid range
@@ -559,7 +595,6 @@ if ($default_precision < 1 || $default_precision > 4)
 	die("ERROR: specified precision is out of range (1 to 4)\n");
 }
 
-
 # Make sure output_directory exists, create it if necessary
 if ($output_directory)
 {
@@ -575,7 +610,6 @@ if ($output_directory)
 gen_html();
 
 exit(0);
-
 
 
 #
@@ -633,6 +667,69 @@ HTML output:
 For more information see: $lcov_url
 END_OF_USAGE
 	;
+}
+
+
+#
+# resolve_absolute_path( path, cwd )
+#
+# Resolves the absolute path of PATH, prefixig CWD if PATH is not absolute
+#
+
+sub resolve_absolute_path($$)
+{
+	my $path = $_[0];
+	my $cwd = $_[1];
+
+	if( $os_is_windows )
+	{
+		# Prepend path if not absolute
+		if( !( $path =~ /^[a-zA-Z]:\\/ ) )
+		{
+			$path = $cwd.$dir_sep.$path;
+		}
+
+		# Remove \\
+		$path =~ s/\\+/\\/g;
+    
+		# Remove .
+		$path =~ s/\\\.\\/\\/g;
+		$path =~ s/\\\.$/\\/g;
+    
+		# Remove trailing \
+		$path =~ s/\\+$//g;
+    
+		# Solve ..
+		while ($path =~ s/\\[^\\]+\\\.\.\\/\\/) {}
+    
+		# Remove preceding ..
+		$path =~ s/^([a-zA-Z]:)\\\.\.\\/$1\\/g;
+	}
+	else
+	{
+		if ($path =~ /^[^\/]/)
+		{
+			$path = $cwd.$dir_sep.$path;
+		}
+  
+		# Remove //
+		$path =~ s/\/+/\//g;
+	
+		# Remove .
+		$path =~ s/\/\.\//\//g;
+		$path =~ s/\/\.$/\//g;
+	
+		# Remove trailing /
+		$path =~ s/\/+$//g;
+	
+		# Solve ..
+		while ($path =~ s/\/[^\/]+\/\.\.\//\//) {}
+	
+		# Remove preceding ..
+		$path =~ s/^\/\.\.\//\//g;
+	}
+
+	return $path;
 }
 
 
@@ -894,7 +991,7 @@ sub gen_html()
 		my $msg = "Using user-specified filename prefix ";
 		for my $i (0 .. $#dir_prefix)
 		{
-				$dir_prefix[$i] =~ s/\/+$//;
+				$dir_prefix[$i] = resolve_absolute_path( $dir_prefix[$i], $cwd );
 				$msg .= ", " unless 0 == $i;
 				$msg .= "\"" . $dir_prefix[$i] . "\"";
 		}
@@ -943,24 +1040,25 @@ sub gen_html()
 		 $br_found, $br_hit)
 			= process_dir($dir_name);
 
-		# Handle files in root directory gracefully
-		$dir_name = "root" if ($dir_name eq "");
-
 		# Remove prefix if applicable
 		if (!$no_prefix && @dir_prefix)
 		{
 			# Match directory names beginning with one of @dir_prefix
 			$dir_name = apply_prefix($dir_name,@dir_prefix);
 		}
-
+		
+		# Remove leading directory separator
+		$dir_name =~ s/^\Q$dir_sep\E+//;
+		
+		# Handle files in root directory gracefully
+		$dir_name = "root" if ($dir_name eq "");
+    
 		# Generate name for directory overview HTML page
-		if ($dir_name =~ /^\/(.*)$/)
+		$link_name = $dir_name."/index.$html_ext";
+
+		if( $os_is_windows )
 		{
-			$link_name = substr($dir_name, 1)."/index.$html_ext";
-		}
-		else
-		{
-			$link_name = $dir_name."/index.$html_ext";
+			$link_name =~ s/^([a-zA-Z]):/$1/;
 		}
 
 		$overview{$dir_name} = [$lines_found, $lines_hit, $fn_found,
@@ -1034,7 +1132,7 @@ sub write_dir_page($$$$$$$$$$$$$$$$$)
 	    $view_type, $sort_type) = @_;
 
 	# Generate directory overview page including details
-	html_create(*HTML_HANDLE, "$rel_dir/index$name.$html_ext");
+	html_create(*HTML_HANDLE, $rel_dir.$dir_sep."index$name.$html_ext");
 	if (!defined($trunc_dir)) {
 		$trunc_dir = "";
 	}
@@ -1094,10 +1192,15 @@ sub process_dir($)
 
 	$trunc_dir = $rel_dir;
 
-	# Remove leading /
-	if ($rel_dir =~ /^\/(.*)$/)
+	if( $os_is_windows )
 	{
-		$rel_dir = substr($rel_dir, 1);
+		# Change volume name to be "directory friendly"
+		$rel_dir =~ s/^([a-zA-Z]):/$1/;
+	}
+	else
+	{
+		# Remove leading /
+		$rel_dir =~ s/^\/+//;
 	}
 
 	# Handle files in root directory gracefully
@@ -1110,7 +1213,7 @@ sub process_dir($)
 
 	# Match filenames which specify files in this directory, not including
 	# sub-directories
-	foreach $filename (grep(/^\Q$abs_dir\E\/[^\/]*$/,keys(%info_data)))
+	foreach $filename ( grep( /^\Q$abs_dir$dir_sep\E[^\Q$dir_sep\E]*$/, keys(%info_data) ) ) 
 	{
 		my $page_link;
 		my $func_link;
@@ -1245,15 +1348,15 @@ sub write_function_page($$$$$$$$$$$$$$$$$$)
 
 	# Generate function table for this file
 	if ($sort_type == 0) {
-		$filename = "$rel_dir/$base_name.func.$html_ext";
+		$filename = "$rel_dir$dir_sep$base_name.func.$html_ext";
 	} else {
-		$filename = "$rel_dir/$base_name.func-sort-c.$html_ext";
+		$filename = "$rel_dir$dir_sep$base_name.func-sort-c.$html_ext";
 	}
 	html_create(*HTML_HANDLE, $filename);
-	$pagetitle = "LCOV - $title - $trunc_dir/$base_name - functions";
+	$pagetitle = "LCOV - $title - $trunc_dir$dir_sep$base_name - functions";
 	write_html_prolog(*HTML_HANDLE, $base_dir, $pagetitle);
-	write_header(*HTML_HANDLE, 4, "$trunc_dir/$base_name",
-		     "$rel_dir/$base_name", $lines_found, $lines_hit,
+	write_header(*HTML_HANDLE, 4, "$trunc_dir$dir_sep$base_name",
+		     "$rel_dir$dir_sep$base_name", $lines_found, $lines_hit,
 		     $fn_found, $fn_hit, $br_found, $br_hit, $sort_type);
 	write_function_table(*HTML_HANDLE, "$base_name.gcov.$html_ext",
 			     $sumcount, $funcdata,
@@ -1314,11 +1417,11 @@ sub process_file($$$)
 
 	$converted = get_converted_lines($testdata);
 	# Generate source code view for this file
-	html_create(*HTML_HANDLE, "$rel_dir/$base_name.gcov.$html_ext");
-	$pagetitle = "LCOV - $test_title - $trunc_dir/$base_name";
+	html_create(*HTML_HANDLE, "$rel_dir$dir_sep$base_name.gcov.$html_ext");
+	$pagetitle = "LCOV - $test_title - $trunc_dir$dir_sep$base_name";
 	write_html_prolog(*HTML_HANDLE, $base_dir, $pagetitle);
-	write_header(*HTML_HANDLE, 2, "$trunc_dir/$base_name",
-		     "$rel_dir/$base_name", $lines_found, $lines_hit,
+	write_header(*HTML_HANDLE, 2, "$trunc_dir$dir_sep$base_name",
+		     "$rel_dir$dir_sep$base_name", $lines_found, $lines_hit,
 		     $fn_found, $fn_hit, $br_found, $br_hit, 0);
 	@source = write_source(*HTML_HANDLE, $filename, $sumcount, $checkdata,
 			       $converted, $funcdata, $sumbrcount);
@@ -1349,18 +1452,18 @@ sub process_file($$$)
 	}
 
 	# Create overview png file
-	gen_png("$rel_dir/$base_name.gcov.png", $overview_width, $tab_size,
+	gen_png("$rel_dir$dir_sep$base_name.gcov.png", $overview_width, $tab_size,
 		@source);
 
 	# Create frameset page
 	html_create(*HTML_HANDLE,
-		    "$rel_dir/$base_name.gcov.frameset.$html_ext");
+		    "$rel_dir$dir_sep$base_name.gcov.frameset.$html_ext");
 	write_frameset(*HTML_HANDLE, $base_dir, $base_name, $pagetitle);
 	close(*HTML_HANDLE);
 
 	# Write overview frame
 	html_create(*HTML_HANDLE,
-		    "$rel_dir/$base_name.gcov.overview.$html_ext");
+		    "$rel_dir$dir_sep$base_name.gcov.overview.$html_ext");
 	write_overview(*HTML_HANDLE, $base_dir, $base_name, $pagetitle,
 		       scalar(@source));
 	close(*HTML_HANDLE);
@@ -1527,6 +1630,12 @@ sub read_info_file($)
 					     "path \"$1\" with CWD to ".
 					     "\"$filename\".\n");
 					$notified_about_relative_paths = 1;
+				}
+
+				if($os_is_windows)
+				{
+					# Replace "forward" slashes with backslashes
+					$filename =~ s/\//\\/g;
 				}
 
 				$data = $result{$filename};
@@ -2389,7 +2498,7 @@ sub get_prefix($@)
 		$current = $_;
 		while ($current = shorten_prefix($current))
 		{
-			$current .= "/";
+			$current .= $dir_sep;
 
 			# Skip rest if the remaining prefix has already been
 			# added to hash
@@ -2407,7 +2516,7 @@ sub get_prefix($@)
 		my $dir = dirname($filename);
 
 		for (my $i = 0; $i < $min_dir; $i++) {
-			delete($prefix{$dir."/"});
+			delete($prefix{$dir.$dir_sep});
 			$dir = shorten_prefix($dir);
 		}
 	}
@@ -2443,7 +2552,7 @@ sub get_prefix($@)
 		}
 	}
 
-	$current =~ s/\/$//;
+	$current =~ s/\Q$dir_sep\E$//;
 
 	return($current);
 }
@@ -2457,10 +2566,10 @@ sub get_prefix($@)
 
 sub shorten_prefix($)
 {
-	my @list = split("/", $_[0]);
+	my @list = split("\\".$dir_sep, $_[0]);
 
 	pop(@list);
-	return join("/", @list);
+	return join($dir_sep, @list);
 }
 
 
@@ -2502,7 +2611,7 @@ sub get_relative_base_path($)
 	if (!$_[0]) { return(""); }
 
 	# Count number of /s in path
-	$index = ($_[0] =~ s/\//\//g);
+	$index = () = $_[0] =~ /\Q$dir_sep\E/g;
 
 	# Add a ../ to $result for each / in the directory path + 1
 	for (; $index>=0; $index--)
@@ -2660,9 +2769,21 @@ sub get_date_string()
 sub create_sub_dir($)
 {
 	my ($dir) = @_;
+	stat($dir);
 
-	system("mkdir", "-p" ,$dir)
-		and die("ERROR: cannot create directory $dir!\n");
+	if ( !-e _ ) 
+	{
+		if ($os_is_windows) 
+		{
+			system("mkdir", $dir)
+				and die("ERROR: cannot create directory '$dir'!\n");
+		}
+		else 
+		{
+			system("mkdir", "-p", $dir)
+				and die("ERROR: cannot create directory $dir!\n");
+		}
+	}
 }
 
 
@@ -4495,14 +4616,14 @@ sub write_header(*$$$$$$$$$$)
 			$view = "<a href=\"$base_dir"."index.$html_ext\" ".
 				"target=\"_parent\">$overview_title</a> - ".
 				"<a href=\"index.$html_ext\" target=\"_parent\">".
-				"$esc_dir_name</a> - $esc_base_name";
+				"$esc_trunc_name</a> - $esc_base_name";
 		}
 		else
 		{
 			$view = "<a href=\"$base_dir"."index.$html_ext\">".
 				"$overview_title</a> - ".
 				"<a href=\"index.$html_ext\">".
-				"$esc_dir_name</a> - $esc_base_name";
+				"$esc_trunc_name</a> - $esc_base_name";
 		}
 
 		# Add function suffix
@@ -5248,6 +5369,7 @@ sub demangle_list($)
 	my %demangle;
 	my $demangle_arg = "";
 	my %versions;
+	my $cppfilt_params = "";
 
 	# Write function names to file
 	($handle, $tmpfile) = tempfile();
@@ -5257,7 +5379,7 @@ sub demangle_list($)
 
 	# Extra flag necessary on OS X so that symbols listed by gcov get demangled
 	# properly.
-	if ($^O eq "darwin") {
+	if ($^O eq "darwin" || $os_is_windows) {
 		$demangle_arg = "--no-strip-underscores";
 	}
 
@@ -5643,7 +5765,6 @@ sub remove_unused_descriptions()
 	}
 }
 
-
 #
 # apply_prefix(filename, PREFIXES)
 #
@@ -5660,16 +5781,15 @@ sub apply_prefix($@)
 	{
 		foreach my $prefix (@dir_prefix)
 		{
-			if ($prefix ne "" && $filename =~ /^\Q$prefix\E\/(.*)$/)
+			if ($prefix ne "" && $filename =~ /^\Q$prefix$dir_sep\E/)
 			{
-				return substr($filename, length($prefix) + 1);
+				return substr($filename, length($prefix.$dir_sep));
 			}
 		}
 	}
 
 	return $filename;
 }
-
 
 #
 # system_no_output(mode, parameters)
