@@ -70,10 +70,11 @@ use File::Spec::Functions qw /abs2rel canonpath catdir catfile catpath
 use Getopt::Long;
 use Cwd qw /abs_path getcwd/;
 
+use Perl::OSType ':all';
 
 # Global constants
 our $tool_dir		= abs_path(dirname($0));
-our $lcov_version	= 'LCOV version '.`$tool_dir/get_version.sh --full`;
+our $lcov_version	= 'LCOV version '.`perl $tool_dir/get_version.pl --full`;
 our $lcov_url		= "http://ltp.sourceforge.net/coverage/lcov.php";
 our $tool_name		= basename($0);
 
@@ -155,7 +156,7 @@ our $version;		# Version option flag
 our $convert_filenames;	# If set, convert filenames when applying diff
 our $strip;		# If set, strip leading directories when applying diff
 our $temp_dir_name;	# Name of temporary directory
-our $cwd = `pwd`;	# Current working directory
+our $cwd;
 our $data_stdout;	# If set, indicates that data is written to stdout
 our $follow;		# If set, indicates that find shall follow links
 our $diff_path = "";	# Path removed from tracefile when applying diff
@@ -175,7 +176,6 @@ our $from_package;
 our $maxdepth;
 our $no_markers;
 our $config;		# Configuration file contents
-chomp($cwd);
 our @temp_dirs;
 our $gcov_gkv;		# gcov kernel support version found on machine
 our $opt_derive_func_data;
@@ -198,7 +198,8 @@ our $br_overall_found;
 our $br_overall_hit;
 our $func_coverage = 1;
 our $br_coverage = 0;
-
+our $os_is_windows;
+our $dir_sep;		# Directory separator character
 
 #
 # Code entry point
@@ -208,6 +209,20 @@ $SIG{__WARN__} = \&warn_handler;
 $SIG{__DIE__} = \&die_handler;
 $SIG{'INT'} = \&abort_handler;
 $SIG{'QUIT'} = \&abort_handler;
+
+# Are we running on Windows?
+$os_is_windows = is_os_type('Windows');
+
+if ($os_is_windows) 
+{
+	chomp($cwd = `cd`);
+	$dir_sep = "\\";
+}
+else 
+{
+	chomp($cwd = `pwd`);
+	$dir_sep = "/";
+}
 
 # Check command line for a configuration file name
 Getopt::Long::Configure("pass_through", "no_auto_abbrev");
@@ -229,18 +244,24 @@ Getopt::Long::Configure("default");
 }
 
 # Read configuration file if available
-if (defined($opt_config_file)) {
+if (defined($opt_config_file)) 
+{
 	$config = read_config($opt_config_file);
-} elsif (defined($ENV{"HOME"}) && (-r $ENV{"HOME"}."/.lcovrc"))
+} 
+elsif (defined($ENV{"HOME"}) && (-r $ENV{"HOME"}."/.lcovrc"))
 {
 	$config = read_config($ENV{"HOME"}."/.lcovrc");
 }
-elsif (-r "/etc/lcovrc")
+elsif ((!$os_is_windows) and (-r "/etc/lcovrc")) 
 {
 	$config = read_config("/etc/lcovrc");
-} elsif (-r "/usr/local/etc/lcovrc")
+} elsif ((!$os_is_windows) and (-r "/usr/local/etc/lcovrc"))
 {
 	$config = read_config("/usr/local/etc/lcovrc");
+}
+elsif (($os_is_windows) and (-r "$tool_dir/../lcovrc"))
+{
+    $config = read_config("$tool_dir/../lcovrc");
 }
 
 if ($config || %opt_rc)
@@ -353,7 +374,7 @@ if ($opt_list_width <= 40) {
 }
 
 # Normalize --path text
-$diff_path =~ s/\/$//;
+$diff_path =~ s/\Q$dir_sep\E+$//;
 
 if ($follow)
 {
@@ -371,6 +392,29 @@ if ($no_recursion)
 else
 {
 	$maxdepth = "";
+}
+
+if( $os_is_windows )
+{
+	# Replace forward slashes by backslashes
+	for( @directory )
+	{
+		s/\//\\/g;
+	}
+	for( @add_tracefile )
+	{
+		s/\//\\/g;
+	}
+	if( defined($list) ) { $list =~ s/\//\\/g; }
+	if( defined($extract) ) { $extract =~ s/\//\\/g; }
+	if( defined($remove) ) { $remove =~ s/\//\\/g; }
+	if( defined($diff_path) ) { $diff_path =~ s/\//\\/g; }
+	if( defined($output_filename) ) { $output_filename =~ s/\//\\/g; }
+	if( defined($base_directory) ) { $base_directory =~ s/\//\\/g; }
+	if( defined($gcov_tool) ) { $gcov_tool =~ s/\//\\/g; }
+	if( defined($to_package) ) { $to_package =~ s/\//\\/g; }
+	if( defined($from_package) ) { $from_package =~ s/\//\\/g; }
+	if( defined($opt_config_file) ) { $opt_config_file =~ s/\//\\/g };
 }
 
 # Check for valid options
@@ -604,7 +648,15 @@ sub userspace_reset()
 	{
 		info("Deleting all .da files in $current_dir".
 		     ($no_recursion?"\n":" and subdirectories\n"));
-		@file_list = `find "$current_dir" $maxdepth $follow -name \\*\\.da -type f -o -name \\*\\.gcda -type f 2>/dev/null`;
+		if ($os_is_windows)
+		{
+			@file_list = `dir /s/b "$current_dir\\*.da" 2>NUL`;
+			push( @file_list, `dir /s/b "$current_dir\\*.gcda" 2>NUL` );
+		}
+		else
+		{
+			@file_list = `find "$current_dir" $maxdepth $follow -name \\*\\.da -type f -o -name \\*\\.gcda -type f 2>/dev/null`;
+		}
 		chomp(@file_list);
 		foreach (@file_list)
 		{
@@ -807,7 +859,7 @@ sub lcov_geninfo(@)
 
 	# Capture data
 	info("Capturing coverage data from ".join(" ", @dir)."\n");
-	@param = ("$tool_dir/geninfo", @dir);
+	@param = ("perl", $tool_dir.$dir_sep."geninfo", @dir);
 	if ($output_filename)
 	{
 		@param = (@param, "--output-filename", $output_filename);
@@ -2687,6 +2739,12 @@ sub write_info_file(*$)
 sub transform_pattern($)
 {
 	my $pattern = $_[0];
+    
+    if( $os_is_windows )
+    {
+        # Replace forward slashes by backslashes
+        $pattern =~ s/\//\\/g;
+    }
 
 	# Escape special chars
 
@@ -3002,12 +3060,12 @@ sub list()
 			     keys(%{$data}));
 	$root_prefix = 1 if ($prefix eq rootdir());
 	$got_prefix = 1 if (length($prefix) > 0);
-	$prefix =~ s/\/$//;
+	$prefix =~ s/\Q$dir_sep\E+$//;
 	# Get longest filename length
 	foreach $filename (keys(%{$data})) {
 		if (!$opt_list_full_path) {
 			if (!$got_prefix || !$root_prefix &&
-			    !($filename =~ s/^\Q$prefix\/\E//)) {
+			    !($filename =~ s/^\Q$prefix$dir_sep\E//)) {
 				my ($v, $d, $f) = splitpath($filename);
 
 				$filename = $f;
@@ -3106,11 +3164,11 @@ sub list()
 
 			$print_filename = $filename;
 			if (!$got_prefix || !$root_prefix &&
-			    !($print_filename =~ s/^\Q$prefix\/\E//)) {
+			    !($print_filename =~ s/^\Q$prefix$dir_sep\E//)) {
 				my ($v, $d, $f) = splitpath($filename);
 
 				$p = catpath($v, $d, "");
-				$p =~ s/\/$//;
+				$p =~ s/\Q$dir_sep\E$//;
 				$print_filename = $f;
 			} else {
 				$p = $prefix;
@@ -3119,7 +3177,7 @@ sub list()
 			if (!defined($lastpath) || $lastpath ne $p) {
 				print("\n") if (defined($lastpath));
 				$lastpath = $p;
-				print("[$lastpath/]\n") if (!$root_prefix);
+				print("[$lastpath$dir_sep]\n") if (!$root_prefix);
 			}
 			$print_filename = shorten_filename($print_filename,
 							   $strlen);
@@ -3251,7 +3309,7 @@ sub strip_directories($$)
 	}
 	for ($i = 0; $i < $depth; $i++)
 	{
-		$filename =~ s/^[^\/]*\/+(.*)$/$1/;
+		$filename =~ s/^[^\Q$dir_sep\E]*\Q$dir_sep\E+(.*)$/$1/;
 	}
 	return $filename;
 }
@@ -3593,12 +3651,12 @@ sub get_line_hash($$$)
 	my $new_depth;
 
 	# Remove trailing slash from diff path
-	$diff_path =~ s/\/$//;
+	$diff_path =~ s/\Q$dir_sep\E+$//;
 	foreach (keys(%{$diff_data}))
 	{
 		my $sep = "";
 
-		$sep = '/' if (!/^\//);
+		$sep = $dir_sep if (!/^\Q$dir_sep\E/);
 
 		# Try to match diff filename with filename
 		if ($filename =~ /^\Q$diff_path$sep$_\E$/)
@@ -3607,8 +3665,8 @@ sub get_line_hash($$$)
 			{
 				# Two files match, choose the more specific one
 				# (the one with more path components)
-				$old_depth = ($diff_name =~ tr/\///);
-				$new_depth = (tr/\///);
+				$old_depth = ($diff_name =~ tr/$dir_sep//);
+				$new_depth = (tr/$dir_sep//);
 				if ($old_depth == $new_depth)
 				{
 					die("ERROR: diff file contains ".
@@ -3667,8 +3725,8 @@ sub convert_paths($$)
 	foreach $filename (keys(%{$path_conversion_data}))
 	{
 		$new_path = $path_conversion_data->{$filename};
-		while (($filename =~ s/^(.*)\/[^\/]+$/$1/) &&
-		       ($new_path =~ s/^(.*)\/[^\/]+$/$1/) &&
+		while (($filename =~ s/^(.*)\Q$dir_sep\E[^\Q$dir_sep\E]+$/$1/) &&
+		       ($new_path =~ s/^(.*)\Q$dir_sep\E[^\Q$dir_sep\E]+$/$1/) &&
 		       ($filename ne $new_path))
 		{
 			$path_conversion_data->{$filename} = $new_path;
@@ -4154,7 +4212,14 @@ sub abort_handler($)
 sub temp_cleanup()
 {
 	# Ensure temp directory is not in use by current process
-	chdir("/");
+	if ($os_is_windows)
+	{
+		chdir("C:/");
+	}
+	else
+	{
+		chdir("/");
+	}
 
 	if (@temp_dirs) {
 		info("Removing temporary directories.\n");
