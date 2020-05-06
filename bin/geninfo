@@ -58,8 +58,8 @@ use File::Temp qw(tempfile tempdir);
 use File::Copy qw(copy);
 use Getopt::Long;
 use Digest::MD5 qw(md5_base64);
-use Cwd qw/abs_path/;
-use PerlIO::gzip;
+use Cwd qw/abs_path cwd/;
+use IO::Uncompress::Gunzip qw(gunzip $GunzipError);
 use JSON qw(decode_json);
 
 if( $^O eq "msys" )
@@ -275,7 +275,7 @@ our $rc_intermediate = "auto";
 our $intermediate;
 our $excl_line = "LCOV_EXCL_LINE";
 our $excl_br_line = "LCOV_EXCL_BR_LINE";
-our $cwd;
+our $cwd=cwd();
 our $os_is_windows;
 our $dir_sep;		# Directory separator character
 
@@ -293,14 +293,12 @@ $os_is_windows = is_os_type('Windows');
 
 if ($os_is_windows) 
 {
-	chomp($cwd = `cd`);
 	$dir_sep = "\\";
 	$gcov_tool = $gcov_tool.".exe";
 	$gcov_tool =~ s/\//\\/g;
 }
 else 
 {
-	chomp($cwd = `pwd`);
 	$dir_sep = "/";
 }
 
@@ -2180,15 +2178,10 @@ sub read_intermediate_text($$)
 sub read_intermediate_json($$$)
 {
 	my ($gcov_filename, $data, $basedir_ref) = @_;
-	my $fd;
 	my $text;
 	my $json;
 
-	open($fd, "<:gzip", $gcov_filename) or
-		die("ERROR: Could not read $gcov_filename: $!\n");
-	local $/;
-	$text = <$fd>;
-	close($fd);
+	gunzip $gcov_filename => \$text or die "Could not decompress file '$gcov_filename': $GunzipError\n";
 
 	$json = decode_json($text);
 	if (!defined($json) || !exists($json->{"files"}) ||
@@ -2201,6 +2194,11 @@ sub read_intermediate_json($$$)
 
 	for my $file (@{$json->{"files"}}) {
 		my $filename = $file->{"file"};
+		if( $os_is_windows )
+		{
+			# Replace forward slashes by backslashes
+			$filename =~ s/\//\\/g;
+		}
 
 		$data->{$filename} = $file;
 	}
@@ -2477,7 +2475,7 @@ sub process_intermediate($$$)
 	if ($is_graph) {
 		# Process graph file - copy to temp directory to prevent
 		# accidental processing of associated data file
-		$data_file = "$tempdir/$fbase$graph_file_extension";
+		$data_file = "$tempdir$dir_sep$fbase$graph_file_extension";
 		if (!copy($file, $data_file)) {
 			$errmsg = "ERROR: Could not copy file $file";
 			goto err;
@@ -2534,6 +2532,11 @@ sub process_intermediate($$$)
 	if (defined($base_directory)) {
 		$base = $base_directory;
 	} elsif (defined($json_basedir)) {
+		if( $os_is_windows )
+		{
+			# For some reason the base dir is malformed with the directory separator being \n instead of \
+			$json_basedir =~ s/\n/\\/g
+		}
 		$base = $json_basedir;
 	} else {
 		$base = $fdir;
