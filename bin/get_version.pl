@@ -45,6 +45,10 @@ if( length($git_version) )
 		$release = $2;
 		$release =~ s/-/\./g;
 	}
+	else
+	{
+		$version = $full; 
+	}
 }
 elsif( -f $version_file )
 {
