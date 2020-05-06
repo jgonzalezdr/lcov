@@ -2158,6 +2158,11 @@ sub read_intermediate_text($$)
 	while (my $line = <$fd>) {
 		if ($line =~ /^file:(.*)$/) {
 			$filename = $1;
+			if( $os_is_windows )
+			{
+				# Replace forward slashes by backslashes
+				$filename =~ s/\//\\/g;
+			}
 			chomp($filename);
 		} elsif (defined($filename)) {
 			$data->{$filename} .= $line;
