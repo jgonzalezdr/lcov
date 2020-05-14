@@ -98,9 +98,13 @@ our %ERROR_ID = (
 our $EXCL_START = "LCOV_EXCL_START";
 our $EXCL_STOP = "LCOV_EXCL_STOP";
 
-# Marker to exclude branch coverage but keep function and line coveage
+# Marker to exclude branch coverage but keep function and line coverage
 our $EXCL_BR_START = "LCOV_EXCL_BR_START";
 our $EXCL_BR_STOP = "LCOV_EXCL_BR_STOP";
+
+# Marker to exclude exception branch coverage but keep function, line coverage and non-exception branch coverage
+our $EXCL_EXCEPTION_BR_START = "LCOV_EXCL_EXCEPTION_BR_START";
+our $EXCL_EXCEPTION_BR_STOP = "LCOV_EXCL_EXCEPTION_BR_STOP";
 
 # Compatibility mode values
 our $COMPAT_VALUE_OFF	= 0;
@@ -275,6 +279,7 @@ our $rc_intermediate = "auto";
 our $intermediate;
 our $excl_line = "LCOV_EXCL_LINE";
 our $excl_br_line = "LCOV_EXCL_BR_LINE";
+our $excl_exception_br_line = "LCOV_EXCL_BR_EXCEPTION_LINE";
 our $cwd=cwd();
 our $os_is_windows;
 our $dir_sep;		# Directory separator character
@@ -368,6 +373,7 @@ if ($config || %opt_rc)
 		"lcov_branch_coverage"		=> \$br_coverage,
 		"lcov_excl_line"		=> \$excl_line,
 		"lcov_excl_br_line"		=> \$excl_br_line,
+		"lcov_excl_exception_br_line"		=> \$excl_exception_br_line,
 	});
 
 	# Merge options
@@ -397,7 +403,7 @@ if ($config || %opt_rc)
 			$adjust_src_replace = $replace;
 		}
 	}
-	for my $regexp (($excl_line, $excl_br_line)) {
+	for my $regexp (($excl_line, $excl_br_line, $excl_exception_br_line)) {
 		eval 'qr/'.$regexp.'/';
 		my $error = $@;
 		chomp($error);
@@ -495,6 +501,13 @@ if (system_no_output(3, $gcov_tool, "--help") == -1)
 ($gcov_version, $gcov_version_string) = get_gcov_version();
 $gcov_caps = get_gcov_capabilities();
 
+# Check validity of branch coverage options
+if($br_coverage eq "exclude-exceptions") {
+	$br_coverage = 2;
+} elsif(($br_coverage lt 0) || ($br_coverage gt 1)) {
+	die("ERROR: Invalid lcov_branch_coverage value '$br_coverage'");
+}
+
 # Determine intermediate mode
 if ($rc_intermediate eq "0") {
 	$intermediate = 0;
@@ -502,7 +515,7 @@ if ($rc_intermediate eq "0") {
 	$intermediate = 1;
 } elsif (lc($rc_intermediate) eq "auto") {
 	# Use intermediate format if supported by gcov
-	$intermediate = ($gcov_caps->{'intermediate-format'} ||
+	$intermediate = (($gcov_caps->{'intermediate-format'} && ($br_coverage != 2)) ||
 			 $gcov_caps->{'json-format'}) ? 1 : 0;
 } else {
 	die("ERROR: invalid value for geninfo_intermediate: ".
@@ -516,6 +529,16 @@ if ($intermediate) {
 		     "intermediate format - ignoring\n");
 		$opt_derive_func_data = 0;
 	}
+	if (($br_coverage == 2) && !$gcov_caps->{'json-format'}) {
+		warn("WARNING: excluding exception branches is not compatible with ".
+		     "text intermediate format - ignoring\n");
+	}
+}
+
+if(($br_coverage == 2) && ($gcov_version < $GCOV_VERSION_3_3_0))
+{
+	warn("WARNING: excluding exception branches is not compatible with ".
+	     "gcov versions older than 3.3.0 - ignoring\n");
 }
 
 # Determine gcov options
@@ -1922,7 +1945,9 @@ sub read_gcov_file($)
 	my $exclude_flag = 0;
 	my $exclude_line = 0;
 	my $exclude_br_flag = 0;
+	my $exclude_exception_br_flag = 0;
 	my $exclude_branch = 0;
+	my $exclude_exception_branch = 0;
 	my $last_block = $UNNAMED_BLOCK;
 	my $last_line = 0;
 	local *INPUT;
@@ -2034,10 +2059,11 @@ sub read_gcov_file($)
 				# branches
 				$last_line = $2;
 				$last_block = $3;
-			} elsif (/^branch\s+(\d+)\s+taken\s+(\d+)/) {
+			} elsif (/^branch\s+(\d+)\s+taken\s+(\d+)(?:\s+\(([^)]*)\))?/) {
 				next if (!$br_coverage);
 				next if ($exclude_line);
 				next if ($exclude_branch);
+				next if (($exclude_exception_branch || ($br_coverage == 2)) && defined($3) && ($3 eq "throw"));
 				$branches = br_gvec_push($branches, $last_line,
 						$last_block, $1, $2);
 			} elsif (/^branch\s+(\d+)\s+never\s+executed/) {
@@ -2094,6 +2120,19 @@ sub read_gcov_file($)
 						$exclude_branch = 0;
 					}
 				}
+				# Check for exclusion markers (exception branch exclude)
+				if (!$no_markers) {
+					if (/$EXCL_EXCEPTION_BR_STOP/) {
+						$exclude_exception_br_flag = 0;
+					} elsif (/$EXCL_EXCEPTION_BR_START/) {
+						$exclude_exception_br_flag = 1;
+					}
+					if (/$excl_exception_br_line/ || $exclude_exception_br_flag) {
+						$exclude_exception_branch = 1;
+					} else {
+						$exclude_exception_branch = 0;
+					}
+				}
 
 				# Strip unexecuted basic block marker
 				$count =~ s/\*$//;
@@ -2130,7 +2169,7 @@ sub read_gcov_file($)
 	}
 
 	close(INPUT);
-	if ($exclude_flag || $exclude_br_flag) {
+	if ($exclude_flag || $exclude_br_flag || $exclude_exception_br_flag) {
 		warn("WARNING: unterminated exclusion section in $filename\n");
 	}
 	return(\@result, $branches, \@functions);
@@ -2225,6 +2264,7 @@ sub read_intermediate_json($$$)
 # srcdata:   filename -> [ excl, brexcl, checksums ]
 # excl:      lineno -> 1 for all lines for which to exclude all data
 # brexcl:    lineno -> 1 for all lines for which to exclude branch data
+#                      2 for all lines for which to exclude exception branch data (ignored)
 # checksums: lineno -> source code checksum
 #
 # Note: To simplify processing, gcov data is not combined here, that is counts
@@ -2284,7 +2324,7 @@ sub intermediate_text_to_info($$$)
 				print($fd "FNDA:$2,$3\n");
 			} elsif ($line =~ /^branch:(\d+),(taken|nottaken|notexec)/) {
 				next if (!$br_coverage || $excl->{$1} ||
-					 $brexcl->{$1});
+					 (defined($brexcl->{$1}) && ($brexcl->{$1} == 1)));
 
 				# branch:<line>,taken|nottaken|notexec
 				if ($2 eq "taken") {
@@ -2314,6 +2354,7 @@ sub intermediate_text_to_info($$$)
 # srcdata:   filename -> [ excl, brexcl, checksums ]
 # excl:      lineno -> 1 for all lines for which to exclude all data
 # brexcl:    lineno -> 1 for all lines for which to exclude branch data
+#                      2 for all lines for which to exclude exception branch data
 # checksums: lineno -> source code checksum
 #
 # Note: To simplify processing, gcov data is not combined here, that is counts
@@ -2380,15 +2421,18 @@ sub intermediate_json_to_info($$$)
 
 			$branch_num = 0;
 			# Branch data
-			if ($br_coverage && !$brexcl->{$line}) {
+			if ($br_coverage && (!defined($brexcl->{$line}) || ($brexcl->{$line} != 1))) {
 				for my $b (@$branches) {
 					my $brcount = $b->{"count"};
+					my $is_exception = $b->{"throw"};
 
-					if (!defined($brcount) || $unexec) {
-						$brcount = "-";
+					if (!$is_exception || ((!defined($brexcl->{$line}) || ($brexcl->{$line} != 2)) && ($br_coverage != 2))) {
+						if (!defined($brcount) || $unexec) {
+							$brcount = "-";
+						}
+						print($fd "BRDA:$line,0,$branch_num,".
+						      "$brcount\n");
 					}
-					print($fd "BRDA:$line,0,$branch_num,".
-					      "$brcount\n");
 
 					$branch_num++;
 				}
@@ -2884,6 +2928,7 @@ sub get_source_data($)
 	my $flag = 0;
 	my %brdata;
 	my $brflag = 0;
+	my $exceptionbrflag = 0;
 	my %checksums;
 	local *HANDLE;
 
@@ -2905,8 +2950,15 @@ sub get_source_data($)
 		} elsif (/$EXCL_BR_START/) {
 			$brflag = 1;
 		}
+		if (/$EXCL_EXCEPTION_BR_STOP/) {
+			$exceptionbrflag = 0;
+		} elsif (/$EXCL_EXCEPTION_BR_START/) {
+			$exceptionbrflag = 1;
+		}
 		if (/$excl_br_line/ || $brflag) {
 			$brdata{$.} = 1;
+		} elsif (/$excl_exception_br_line/ || $exceptionbrflag) {
+			$brdata{$.} = 2;
 		}
 		if ($checksum) {
 			chomp();

@@ -884,14 +884,23 @@ Default is 1.
 .PP
 
 .BR lcov_branch_coverage " ="
-.IR 0 | 1
+.IR 0 | 1 | exclude-exceptions
 .IP
 Specify whether lcov should handle branch coverage data.
 .br
 
-Setting this option to 0 can reduce memory and CPU time consumption
-when lcov is collecting and processing coverage data, as well as
-reduce the size of the resulting data files. Note that setting
+Setting this option to 0 will disable branch coverage collection.
+Setting this option to 1 will enable branch coverage collection.
+Setting this option to "exclude-exceptions" will enable branch coverage 
+collection ignoring exception branches.
+.br
+
+Disabling branch coverage collection can reduce memory and CPU time 
+consumption when lcov is collecting and processing coverage data, as well as
+reduce the size of the resulting data files.
+.br
+
+Note that setting
 .B genhtml_branch_coverage
 will override this option for HTML generation.
 .br
@@ -915,6 +924,15 @@ Specify the regular expression of lines to exclude from branch coverage.
 .br
 
 Default is 'LCOV_EXCL_BR_LINE'.
+.PP
+
+.BR lcov_excl_exception_br_line " ="
+.I expression
+.IP
+Specify the regular expression of lines to exclude from exception branch coverage.
+.br
+
+Default is 'LCOV_EXCL_EXCEPTION_BR_LINE'.
 .PP
 
 .SH FILES
