@@ -71,12 +71,14 @@ use File::Temp qw(tempfile);
 use Getopt::Long;
 use Digest::MD5 qw(md5_base64);
 use Cwd qw/abs_path cwd/;
+use File::Path qw/make_path/;
 
 
 # Global constants
 our $title		= "LCOV - code coverage report";
+our $os_is_windows  = $^O =~ /^MSWin/;
 our $tool_dir		= abs_path(dirname($0));
-our $lcov_version	= 'LCOV version '.`$tool_dir/get_version.sh --full`;
+our $lcov_version	= 'LCOV version '.`perl $tool_dir/get_version.pl --full`;
 our $lcov_url		= "http://ltp.sourceforge.net/coverage/lcov.php";
 our $tool_name		= basename($0);
 
@@ -205,6 +207,8 @@ sub die_handler($);
 sub parse_ignore_errors(@);
 sub parse_dir_prefix(@);
 sub rate($$;$$$);
+sub normalize_path($);
+sub solve_relative_path($$);
 
 
 # HTML related prototypes
@@ -344,6 +348,14 @@ elsif (-r "/etc/lcovrc")
 } elsif (-r "/usr/local/etc/lcovrc")
 {
 	$config = read_config("/usr/local/etc/lcovrc");
+}
+elsif (($os_is_windows) and (-r "$tool_dir/../etc/lcovrc"))
+{
+	$config = read_config("$tool_dir/../etc/lcovrc");
+}
+elsif (($os_is_windows) and (-r "$tool_dir/../lcovrc"))
+{
+    $config = read_config("$tool_dir/../lcovrc");
 }
 
 if ($config || %opt_rc)
@@ -494,10 +506,7 @@ if (!$test_title)
 # directories)
 if ($css_filename)
 {
-	if (!($css_filename =~ /^\/(.*)$/))
-	{
-		$css_filename = $cwd."/".$css_filename;
-	}
+	$css_filename = solve_relative_path($cwd, $css_filename);
 }
 
 # Make sure tab_size is within valid range
@@ -894,9 +903,10 @@ sub gen_html()
 		my $msg = "Using user-specified filename prefix ";
 		for my $i (0 .. $#dir_prefix)
 		{
-				$dir_prefix[$i] =~ s/\/+$//;
-				$msg .= ", " unless 0 == $i;
-				$msg .= "\"" . $dir_prefix[$i] . "\"";
+			normalize_path( $dir_prefix[$i] );
+			$dir_prefix[$i] =~ s/\/+$//;
+			$msg .= ", " unless 0 == $i;
+			$msg .= "\"" . $dir_prefix[$i] . "\"";
 		}
 		info($msg . "\n");
 	}
@@ -943,24 +953,25 @@ sub gen_html()
 		 $br_found, $br_hit)
 			= process_dir($dir_name);
 
-		# Handle files in root directory gracefully
-		$dir_name = "root" if ($dir_name eq "");
-
 		# Remove prefix if applicable
 		if (!$no_prefix && @dir_prefix)
 		{
 			# Match directory names beginning with one of @dir_prefix
 			$dir_name = apply_prefix($dir_name,@dir_prefix);
 		}
-
+		
+		# Remove leading directory separator
+		$dir_name =~ s/^\/+//;
+		
+		# Handle files in root directory gracefully
+		$dir_name = "root" if ($dir_name eq "");
+    
 		# Generate name for directory overview HTML page
-		if ($dir_name =~ /^\/(.*)$/)
+		$dir_name =~ s/\/+$//;
+		$link_name = $dir_name."/index.$html_ext";
+		if( $os_is_windows )
 		{
-			$link_name = substr($dir_name, 1)."/index.$html_ext";
-		}
-		else
-		{
-			$link_name = $dir_name."/index.$html_ext";
+			$link_name =~ s/^([a-zA-Z]):/$1/;
 		}
 
 		$overview{$dir_name} = [$lines_found, $lines_hit, $fn_found,
@@ -1095,9 +1106,12 @@ sub process_dir($)
 	$trunc_dir = $rel_dir;
 
 	# Remove leading /
-	if ($rel_dir =~ /^\/(.*)$/)
+	$rel_dir =~ s/^\/+//;
+
+	if( $os_is_windows )
 	{
-		$rel_dir = substr($rel_dir, 1);
+		# Change volume name to be "directory friendly"
+		$rel_dir =~ s/^([a-zA-Z]):/$1/;
 	}
 
 	# Handle files in root directory gracefully
@@ -1518,7 +1532,7 @@ sub read_info_file($)
 			{
 				# Filename information found
 				# Retrieve data for new entry
-				$filename = File::Spec->rel2abs($1, $cwd);
+				$filename = solve_relative_path($cwd, $1);
 
 				if (!File::Spec->file_name_is_absolute($1) &&
 				    !$notified_about_relative_paths)
@@ -2661,8 +2675,11 @@ sub create_sub_dir($)
 {
 	my ($dir) = @_;
 
-	system("mkdir", "-p" ,$dir)
-		and die("ERROR: cannot create directory $dir!\n");
+	if( !-e $dir )
+	{
+		make_path($dir)
+			or die("ERROR: cannot create directory '$dir'!\n");
+	}
 }
 
 
@@ -5257,7 +5274,7 @@ sub demangle_list($)
 
 	# Extra flag necessary on OS X so that symbols listed by gcov get demangled
 	# properly.
-	if ($^O eq "darwin") {
+	if ($^O eq "darwin" || $os_is_windows) {
 		$demangle_arg = "--no-strip-underscores";
 	}
 
@@ -5976,3 +5993,103 @@ sub rate($$;$$$)
 
 	return sprintf("%*s", $width, $rate.$suffix);
 }
+
+
+#
+# normalize_path(path)
+#
+# Converts directory separators in the path to the platform native directory
+# separator
+#
+
+sub normalize_path($)
+{
+	if (defined($_[0]) && $os_is_windows) {
+		# Replace backslashes with forward slashes
+		$_[0] =~ tr/\\/\//;
+	}
+}
+
+
+#
+# solve_relative_path(path, dir)
+#
+# Solve relative path components of DIR which, if not absolute, resides in PATH.
+#
+
+sub solve_relative_path($$)
+{
+	my $path = $_[0];
+	my $dir = $_[1];
+	my $volume;
+	my $directories;
+	my $filename;
+	my @dirs;			# holds path elements
+	my $result;
+
+	# Convert from Windows path to msys path
+	if( $^O eq "msys" )
+	{
+		# search for a windows drive letter at the beginning
+		($volume, $directories, $filename) = File::Spec::Win32->splitpath( $dir );
+		if( $volume ne '' )
+		{
+			my $uppercase_volume;
+			# transform c/d\../e/f\g to Windows style c\d\..\e\f\g
+			$dir = File::Spec::Win32->canonpath( $dir );
+			# use Win32 module to retrieve path components
+			# $uppercase_volume is not used any further
+			( $uppercase_volume, $directories, $filename ) = File::Spec::Win32->splitpath( $dir );
+			@dirs = File::Spec::Win32->splitdir( $directories );
+			
+			# prepend volume, since in msys C: is always mounted to /c
+			$volume =~ s|^([a-zA-Z]+):|/\L$1\E|;
+			unshift( @dirs, $volume );
+			
+			# transform to Unix style '/' path
+			$directories = File::Spec->catdir( @dirs );
+			$dir = File::Spec->catpath( '', $directories, $filename );
+		} else {
+			# eliminate '\' path separators
+			$dir = File::Spec->canonpath( $dir );
+		}
+	}
+
+	$result = $dir;
+
+	# Prepend path if not absolute
+	if (!File::Spec->file_name_is_absolute($dir))
+	{
+		$result = "$path/$result";
+	}
+
+	normalize_path($result);
+
+	# Remove //
+	$result =~ s/\/+/\//g;
+
+	# Remove .
+	while ($result =~ s/\/\.\//\//g)
+	{
+	}
+	$result =~ s/\/\.$/\//g;
+
+	# Remove trailing /
+	$result =~ s/\/$//g;
+
+	# Solve ..
+	while ($result =~ s/\/[^\/]+\/\.\.\//\//)
+	{
+	}
+	$result =~ s/\/[^\/]+\/\.\.$//;
+
+	# Remove preceding ..
+	if ($os_is_windows)
+	{
+		$result =~ s/^([a-zA-Z]:)\/\.\.\//$1\//g;
+	}
+	$result =~ s/^\/\.\.\//\//g;
+
+	return $result;
+}
+

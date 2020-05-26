@@ -58,9 +58,10 @@ use File::Temp qw(tempfile tempdir);
 use File::Copy qw(copy);
 use Getopt::Long;
 use Digest::MD5 qw(md5_base64);
-use Cwd qw/abs_path/;
-use PerlIO::gzip;
+use Cwd qw/abs_path cwd/;
+use IO::Uncompress::Gunzip qw(gunzip $GunzipError);
 use JSON qw(decode_json);
+use File::Find;
 
 if( $^O eq "msys" )
 {
@@ -68,8 +69,9 @@ if( $^O eq "msys" )
 }
 
 # Constants
+our $os_is_windows  = $^O =~ /^MSWin/;
 our $tool_dir		= abs_path(dirname($0));
-our $lcov_version	= 'LCOV version '.`$tool_dir/get_version.sh --full`;
+our $lcov_version	= 'LCOV version '.`perl $tool_dir/get_version.pl --full`;
 our $lcov_url		= "http://ltp.sourceforge.net/coverage/lcov.php";
 our $gcov_tool		= "gcov";
 our $tool_name		= basename($0);
@@ -220,6 +222,7 @@ sub compat_name($);
 sub parse_compat_modes($);
 sub is_compat($);
 sub is_compat_auto($);
+sub normalize_path($);
 
 
 # Global variables
@@ -251,7 +254,6 @@ our @include_patterns; # List of source file patterns to include
 our @exclude_patterns; # List of source file patterns to exclude
 our %excluded_files; # Files excluded due to include/exclude options
 our $no_recursion = 0;
-our $maxdepth;
 our $no_markers = 0;
 our $opt_derive_func_data = 0;
 our $opt_external = 1;
@@ -273,10 +275,7 @@ our $rc_intermediate = "auto";
 our $intermediate;
 our $excl_line = "LCOV_EXCL_LINE";
 our $excl_br_line = "LCOV_EXCL_BR_LINE";
-
-our $cwd = `pwd`;
-chomp($cwd);
-
+our $cwd=cwd();
 
 #
 # Code entry point
@@ -322,6 +321,14 @@ elsif (-r "/etc/lcovrc")
 } elsif (-r "/usr/local/etc/lcovrc")
 {
 	$config = read_config("/usr/local/etc/lcovrc");
+}
+elsif (($os_is_windows) and (-r "$tool_dir/../etc/lcovrc"))
+{
+	$config = read_config("$tool_dir/../etc/lcovrc");
+}
+elsif (($os_is_windows) and (-r "$tool_dir/../lcovrc"))
+{
+	$config = read_config("$tool_dir/../lcovrc");
 }
 
 if ($config || %opt_rc)
@@ -533,16 +540,6 @@ if ($base_directory)
 	$base_directory = solve_relative_path($cwd, $base_directory);
 }
 
-# Check for follow option
-if ($follow)
-{
-	$follow = "-follow"
-}
-else
-{
-	$follow = "";
-}
-
 # Determine checksum mode
 if (defined($checksum))
 {
@@ -553,16 +550,6 @@ else
 {
 	# Default is off
 	$checksum = 0;
-}
-
-# Determine max depth for recursion
-if ($no_recursion)
-{
-	$maxdepth = "-maxdepth 1";
-}
-else
-{
-	$maxdepth = "";
 }
 
 # Check for directory name
@@ -614,10 +601,7 @@ if (defined($output_filename) && ($output_filename ne "-"))
 
 	# Make $output_filename an absolute path because we're going
 	# to change directories while processing files
-	if (!($output_filename =~ /^\/(.*)$/))
-	{
-		$output_filename = $cwd."/".$output_filename;
-	}
+	$output_filename = solve_relative_path($cwd, $output_filename);
 }
 
 # Build list of directories to identify external files
@@ -741,7 +725,7 @@ sub get_common_prefix($@)
 
 	foreach $file (@files) {
 		my ($v, $d, $f) = splitpath($file);
-		my @comp = splitdir($d);
+		my @comp = splitdir($os_is_windows ? $v.$d : $d);
 
 		if (!@prefix) {
 			@prefix = @comp;
@@ -813,8 +797,17 @@ sub gen_info($)
 	if (-d $directory)
 	{
 		info("Scanning $directory for $ext files ...\n");
-
-		@file_list = `find "$directory" $maxdepth $follow -name \\*$ext -type f -o -name \\*$ext -type l 2>/dev/null`;
+		my $wanted_sub = sub {
+			my $rel_path = $_;
+			$rel_path =~ s/^\Q$directory\E\/*//;
+			return unless $rel_path =~ /\Q$ext\E\z/s;
+			return if $no_recursion && (($rel_path =~ tr/\///) >= 1);
+			lstat($_);
+			return unless ((-f _) || (-l _));
+			push @file_list, $_;
+		};
+		find({wanted => $wanted_sub, follow => $follow, no_chdir => 1},
+			$directory);
 		chomp(@file_list);
 		if (!@file_list) {
 			warn("WARNING: no $ext files found in $directory - ".
@@ -1133,7 +1126,8 @@ sub process_dafile($$)
 
 	# Change to directory containing data files and apply GCOV
 	debug("chdir($base_dir)\n");
-        chdir($base_dir);
+	chdir($base_dir)
+		or die("cannot change to directory $base_dir\n");
 
 	if ($da_renamed)
 	{
@@ -1521,14 +1515,17 @@ sub solve_relative_path($$)
 	}
 
 	$result = $dir;
+
 	# Prepend path if not absolute
-	if ($dir =~ /^[^\/]/)
+	if (!file_name_is_absolute($dir))
 	{
 		$result = "$path/$result";
 	}
 
+	normalize_path($result);
+
 	# Remove //
-	$result =~ s/\/\//\//g;
+	$result =~ s/\/+/\//g;
 
 	# Remove .
 	while ($result =~ s/\/\.\//\//g)
@@ -1543,8 +1540,13 @@ sub solve_relative_path($$)
 	while ($result =~ s/\/[^\/]+\/\.\.\//\//)
 	{
 	}
+	$result =~ s/\/[^\/]+\/\.\.$//;
 
 	# Remove preceding ..
+	if ($os_is_windows)
+	{
+		$result =~ s/^([a-zA-Z]:)\/\.\.\//$1\//g;
+	}
 	$result =~ s/^\/\.\.\//\//g;
 
 	return $result;
@@ -2079,6 +2081,7 @@ sub read_intermediate_text($$)
 	while (my $line = <$fd>) {
 		if ($line =~ /^file:(.*)$/) {
 			$filename = $1;
+			normalize_path($filename);
 			chomp($filename);
 		} elsif (defined($filename)) {
 			$data->{$filename} .= $line;
@@ -2103,15 +2106,11 @@ sub read_intermediate_text($$)
 sub read_intermediate_json($$$)
 {
 	my ($gcov_filename, $data, $basedir_ref) = @_;
-	my $fd;
 	my $text;
 	my $json;
 
-	open($fd, "<:gzip", $gcov_filename) or
-		die("ERROR: Could not read $gcov_filename: $!\n");
-	local $/;
-	$text = <$fd>;
-	close($fd);
+	gunzip $gcov_filename => \$text or 
+		die "Could not decompress file '$gcov_filename': $GunzipError\n";
 
 	$json = decode_json($text);
 	if (!defined($json) || !exists($json->{"files"}) ||
@@ -2124,6 +2123,7 @@ sub read_intermediate_json($$$)
 
 	for my $file (@{$json->{"files"}}) {
 		my $filename = $file->{"file"};
+		normalize_path($filename);
 
 		$data->{$filename} = $file;
 	}
@@ -2457,6 +2457,12 @@ sub process_intermediate($$$)
 	if (defined($base_directory)) {
 		$base = $base_directory;
 	} elsif (defined($json_basedir)) {
+		if ($os_is_windows) {
+			# For some reason at least in some versions of gcov the base
+			# directory is malformed with the directory separator being
+			# \n instead of \
+			$json_basedir =~ s/\n/\//g
+		}
 		$base = $json_basedir;
 	} else {
 		$base = $fdir;
@@ -4039,6 +4045,7 @@ sub read_gcno_lines_record(*$$$$$$)
 			graph_expect("filename");
 			$string = read_gcno_string($handle, $big_endian);
 			return undef if (!defined($string));
+			normalize_path($string);
 			# Check for end of record
 			if ($string eq "") {
 				return $filename;
@@ -4147,6 +4154,7 @@ sub read_gcno_function_record(*$$$$$)
 	graph_expect("filename");
 	$filename = read_gcno_string($handle, $big_endian);
 	return undef if (!defined($filename));
+	normalize_path($filename);
 	# Read first line number
 	$lineno = read_gcno_value($handle, $big_endian, "initial line number");
 	return undef if (!defined($lineno));
@@ -4591,3 +4599,19 @@ sub is_compat_auto($)
 	return 1 if ($compat_value{$mode} == $COMPAT_VALUE_AUTO);
 	return 0;
 }
+
+#
+# normalize_path(path)
+#
+# Converts directory separators in the path to the platform native directory
+# separator
+#
+
+sub normalize_path($)
+{
+	if (defined($_[0]) && $os_is_windows) {
+		# Replace backslashes with forward slashes
+		$_[0] =~ tr/\\/\//;
+	}
+}
+
