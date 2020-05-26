@@ -68,12 +68,13 @@ use File::Temp qw /tempdir/;
 use File::Spec::Functions qw /abs2rel canonpath catdir catfile catpath
 			      file_name_is_absolute rootdir splitdir splitpath/;
 use Getopt::Long;
-use Cwd qw /abs_path getcwd/;
+use Cwd qw /abs_path cwd/;
 
 
 # Global constants
+our $os_is_windows  = $^O =~ /^MSWin/;
 our $tool_dir		= abs_path(dirname($0));
-our $lcov_version	= 'LCOV version '.`$tool_dir/get_version.sh --full`;
+our $lcov_version	= 'LCOV version '.`perl $tool_dir/get_version.pl --full`;
 our $lcov_url		= "http://ltp.sourceforge.net/coverage/lcov.php";
 our $tool_name		= basename($0);
 
@@ -136,6 +137,7 @@ sub create_package($$$;$);
 sub get_func_found_and_hit($);
 sub summary();
 sub rate($$;$$$);
+sub normalize_path($);
 
 # Global variables & initialization
 our @directory;		# Specifies where to get coverage data from
@@ -155,7 +157,7 @@ our $version;		# Version option flag
 our $convert_filenames;	# If set, convert filenames when applying diff
 our $strip;		# If set, strip leading directories when applying diff
 our $temp_dir_name;	# Name of temporary directory
-our $cwd = `pwd`;	# Current working directory
+our $cwd = cwd();
 our $data_stdout;	# If set, indicates that data is written to stdout
 our $follow;		# If set, indicates that find shall follow links
 our $diff_path = "";	# Path removed from tracefile when applying diff
@@ -172,10 +174,8 @@ our @exclude_patterns; # List of source file patterns to exclude
 our $no_recursion = 0;
 our $to_package;
 our $from_package;
-our $maxdepth;
 our $no_markers;
 our $config;		# Configuration file contents
-chomp($cwd);
 our @temp_dirs;
 our $gcov_gkv;		# gcov kernel support version found on machine
 our $opt_derive_func_data;
@@ -241,6 +241,14 @@ elsif (-r "/etc/lcovrc")
 } elsif (-r "/usr/local/etc/lcovrc")
 {
 	$config = read_config("/usr/local/etc/lcovrc");
+}
+elsif (($os_is_windows) and (-r "$tool_dir/../etc/lcovrc"))
+{
+	$config = read_config("$tool_dir/../etc/lcovrc");
+}
+elsif (($os_is_windows) and (-r "$tool_dir/../lcovrc"))
+{
+	$config = read_config("$tool_dir/../lcovrc");
 }
 
 if ($config || %opt_rc)
@@ -353,25 +361,8 @@ if ($opt_list_width <= 40) {
 }
 
 # Normalize --path text
-$diff_path =~ s/\/$//;
-
-if ($follow)
-{
-	$follow = "-follow";
-}
-else
-{
-	$follow = "";
-}
-
-if ($no_recursion)
-{
-	$maxdepth = "-maxdepth 1";
-}
-else
-{
-	$maxdepth = "";
-}
+normalize_path($diff_path);
+$diff_path =~ s/\/+$//;
 
 # Check for valid options
 check_options();
@@ -602,9 +593,19 @@ sub userspace_reset()
 
 	foreach $current_dir (@directory)
 	{
-		info("Deleting all .da files in $current_dir".
+		info("Deleting all .da and .gcda files in $current_dir".
 		     ($no_recursion?"\n":" and subdirectories\n"));
-		@file_list = `find "$current_dir" $maxdepth $follow -name \\*\\.da -type f -o -name \\*\\.gcda -type f 2>/dev/null`;
+		my $wanted_sub = sub {
+			my $rel_path = $_;
+			$rel_path =~ s/^\Q$current_dir\E\/*//;
+			return unless $rel_path =~ /\.(?:gc)da$/s;
+			return if $no_recursion && (($rel_path =~ tr/\///) >= 1);
+			lstat($_);
+			return unless ((-f _) || (-l _));
+			push @file_list, $_;
+		};
+		find({wanted => $wanted_sub, follow => $follow, no_chdir => 1},
+			$current_dir);
 		chomp(@file_list);
 		foreach (@file_list)
 		{
@@ -807,7 +808,7 @@ sub lcov_geninfo(@)
 
 	# Capture data
 	info("Capturing coverage data from ".join(" ", @dir)."\n");
-	@param = ("$tool_dir/geninfo", @dir);
+	@param = ("perl", "$tool_dir/geninfo", @dir);
 	if ($output_filename)
 	{
 		@param = (@param, "--output-filename", $output_filename);
@@ -2688,6 +2689,8 @@ sub transform_pattern($)
 {
 	my $pattern = $_[0];
 
+    normalize_path($pattern);
+
 	# Escape special chars
 
 	$pattern =~ s/\\/\\\\/g;
@@ -4327,3 +4330,19 @@ sub rate($$;$$$)
 
 	return sprintf("%*s", $width, $rate.$suffix);
 }
+
+#
+# normalize_path(path)
+#
+# Converts directory separators in the path to the platform native directory
+# separator
+#
+
+sub normalize_path($)
+{
+	if (defined($_[0]) && $os_is_windows) {
+		# Replace forward slashes by backslashes
+		$_[0] =~ tr/\\/\//;
+	}
+}
+
