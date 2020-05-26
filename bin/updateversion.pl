@@ -4,6 +4,7 @@ use strict;
 use warnings;
 
 use File::Basename;
+use File::Copy;
 
 sub update_man_page($);
 sub update_bin_tool($);
@@ -91,16 +92,14 @@ sub get_file_info($)
 	$month += 1;
 
 	return (sprintf("%04d-%02d-%02d", $year, $month, $day),
-		sprintf("%04d%02d%02d%02d%02d.%02d", $year, $month, $day,
-			$hour, $min, $sec),
-		sprintf("%o", $stat[2] & 07777));
+		$stat[9], $stat[2] & 07777);
 }
 
 sub update_man_page($)
 {
 	my ($filename) = @_;
-	my @date = get_file_info($filename);
-	my $date_string = $date[0];
+	my @file_info = get_file_info($filename);
+	my $date_string = $file_info[0];
 	local *IN;
 	local *OUT;
 
@@ -115,15 +114,15 @@ sub update_man_page($)
 	}
 	close(OUT);
 	close(IN);
-	chmod(oct($date[2]), "$filename.new");
-	system("mv", "-f", "$filename.new", "$filename");
-	system("touch", "$filename", "-t", $date[1]);
+	chmod($file_info[2], "$filename.new");
+	move("$filename.new", "$filename");
+	utime($file_info[1], $file_info[1], $filename);
 }
 
 sub update_bin_tool($)
 {
 	my ($filename) = @_;
-	my @date = get_file_info($filename);
+	my @file_info = get_file_info($filename);
 	local *IN;
 	local *OUT;
 
@@ -136,15 +135,15 @@ sub update_bin_tool($)
 	}
 	close(OUT);
 	close(IN);
-	chmod(oct($date[2]), "$filename.new");
-	system("mv", "-f", "$filename.new", "$filename");
-	system("touch", "$filename", "-t", $date[1]);
+	chmod($file_info[2], "$filename.new");
+	move("$filename.new", "$filename");
+	utime($file_info[1], $file_info[1], $filename);
 }
 
 sub update_txt_file($)
 {
 	my ($filename) = @_;
-	my @date = get_file_info($filename);
+	my @file_info = get_file_info($filename);
 	local *IN;
 	local *OUT;
 
@@ -152,20 +151,20 @@ sub update_txt_file($)
 	open(OUT, ">$filename.new") ||
 		die("Error: cannot create $filename.new\n");
 	while (<IN>) {
-		s/(Last\s+changes:\s+)\d\d\d\d-\d\d-\d\d/$1$date[0]/g;
+		s/(Last\s+changes:\s+)\d\d\d\d-\d\d-\d\d/$1$file_info[0]/g;
 		print(OUT $_);
 	}
 	close(OUT);
 	close(IN);
-	chmod(oct($date[2]), "$filename.new");
-	system("mv", "-f", "$filename.new", "$filename");
-	system("touch", "$filename", "-t", $date[1]);
+	chmod(oct($file_info[2]), "$filename.new");
+	move("$filename.new", "$filename");
+	utime($file_info[1], $file_info[1], $filename);
 }
 
 sub update_spec_file($)
 {
 	my ($filename) = @_;
-	my @date = get_file_info($filename);
+	my @file_info = get_file_info($filename);
 	local *IN;
 	local *OUT;
 
@@ -179,8 +178,8 @@ sub update_spec_file($)
 	}
 	close(OUT);
 	close(IN);
-	system("mv", "-f", "$filename.new", "$filename");
-	system("touch", "$filename", "-t", $date[1]);
+	move("$filename.new", "$filename");
+	utime($file_info[1], $file_info[1], $filename);
 }
 
 sub write_version_file($)
@@ -189,8 +188,8 @@ sub write_version_file($)
 	my $fd;
 
 	open($fd, ">", $filename) or die("Error: cannot write $filename: $!\n");
-	print($fd "VERSION=$version\n");
-	print($fd "RELEASE=$release\n");
-	print($fd "FULL=$full\n");
+	print($fd "\$version = '$version';\n");
+	print($fd "\$release = '$release';\n");
+	print($fd "\$full = '$full';\n");
 	close($fd);
 }
