@@ -1,0 +1,35 @@
+version: 1.14-{build}
+
+environment:
+  matrix:
+  - APPVEYOR_BUILD_WORKER_IMAGE: Ubuntu1604
+    GCC_VERSION: 9
+    INTERMEDIATE: auto
+  - APPVEYOR_BUILD_WORKER_IMAGE: Ubuntu1604
+    GCC_VERSION: 8
+    INTERMEDIATE: 1
+  - APPVEYOR_BUILD_WORKER_IMAGE: Ubuntu1604
+    GCC_VERSION: 8
+    INTERMEDIATE: 0
+  - APPVEYOR_BUILD_WORKER_IMAGE: Ubuntu1604
+    GCC_VERSION: 7
+    INTERMEDIATE: 1
+  - APPVEYOR_BUILD_WORKER_IMAGE: Ubuntu1604
+    GCC_VERSION: 7
+    INTERMEDIATE: 0
+  - APPVEYOR_BUILD_WORKER_IMAGE: Ubuntu1604
+    GCC_VERSION: 5
+    INTERMEDIATE: 1
+  - APPVEYOR_BUILD_WORKER_IMAGE: Ubuntu1604
+    GCC_VERSION: 5
+    INTERMEDIATE: 0
+
+install:
+  - sh: test -e /usr/local/bin/json_xs || sudo cpan JSON >/dev/null 2>&1
+
+build: off
+
+test_script:
+  - sh: echo geninfo_gcov_tool=gcov-$GCC_VERSION >> test/lcovrc
+  - sh: echo geninfo_intermediate=$INTERMEDIATE >> test/lcovrc
+  - sh: make test CC=gcc-$GCC_VERSION
